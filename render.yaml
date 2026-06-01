@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: todo-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /api/todos
+    envVars:
+      - key: SUPABASE_DB_PASSWORD
+        sync: false   # 在 Render Dashboard 手动填写

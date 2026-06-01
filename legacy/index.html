@@ -229,11 +229,12 @@
         </div>
 
         <div class="todo-section">
-            <h2>Todo List</h2>
+            <h2>Todo List <small style="font-size:0.5em;color:#888;">（Supabase 云端共享）</small></h2>
             <div class="todo-input-group">
                 <input type="text" class="todo-input" id="todoInput" placeholder="Add a new task..." onkeypress="handleKeyPress(event)">
                 <button class="btn btn-primary" onclick="addTodo()">Add</button>
             </div>
+            <p id="todoStatus" style="color:#999;font-size:0.9em;margin-top:10px;">Loading...</p>
             <ul class="todo-list" id="todoList"></ul>
         </div>
     </div>
@@ -242,74 +243,118 @@
         <p>Deployed on GitHub Pages</p>
     </footer>
 
-    <script>
+    <script type="module">
+        import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+        // ===== Supabase 配置（替换成你自己的）=====
+        const SUPABASE_URL = 'https://zrjsrqzluctpdnjcobuy.supabase.co';
+        const SUPABASE_ANON_KEY = 'sb_publishable_wcwwyYWV3J7aXa6rXYwVUQ_s6p0s-Fi';
+        // =========================================
+
+        const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        // ---------- Counter & Color & Clock ----------
         let count = 0;
         const counterEl = document.getElementById('counter');
         const colorBox = document.getElementById('colorBox');
         const todoInput = document.getElementById('todoInput');
         const todoList = document.getElementById('todoList');
+        const todoStatus = document.getElementById('todoStatus');
 
-        function changeCounter(delta) {
+        window.changeCounter = (delta) => {
             count += delta;
             counterEl.textContent = count;
             counterEl.classList.add('pop');
             setTimeout(() => counterEl.classList.remove('pop'), 200);
-        }
+        };
+        window.resetCounter = () => { count = 0; counterEl.textContent = '0'; };
 
-        function resetCounter() {
-            count = 0;
-            counterEl.textContent = '0';
-        }
-
-        function randomColor() {
-            return '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0');
-        }
-
-        function changeColor() {
+        const randomColor = () => '#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0');
+        window.changeColor = () => {
             colorBox.style.background = `linear-gradient(135deg, ${randomColor()}, ${randomColor()})`;
             colorBox.style.transform = `rotate(${Math.random() * 360}deg) scale(${0.8 + Math.random() * 0.4})`;
-        }
+        };
+        window.changeColor();
 
-        changeColor();
-
-        function addTodo() {
-            const text = todoInput.value.trim();
-            if (!text) return;
-
-            const li = document.createElement('li');
-            li.className = 'todo-item';
-            li.innerHTML = `
-                <input type="checkbox" onchange="toggleTodo(this)">
-                <span>${text}</span>
-                <button class="delete-btn" onclick="deleteTodo(this)">&times;</button>
-            `;
-            todoList.appendChild(li);
-            todoInput.value = '';
-        }
-
-        function handleKeyPress(e) {
-            if (e.key === 'Enter') addTodo();
-        }
-
-        function toggleTodo(checkbox) {
-            checkbox.parentElement.classList.toggle('done');
-        }
-
-        function deleteTodo(btn) {
-            const item = btn.parentElement;
-            item.style.opacity = '0';
-            item.style.transform = 'translateX(20px)';
-            setTimeout(() => item.remove(), 300);
-        }
-
-        function updateClock() {
-            const now = new Date();
+        const updateClock = () => {
             document.getElementById('clock').textContent =
-                now.toLocaleTimeString('zh-CN', { hour12: false });
-        }
-
+                new Date().toLocaleTimeString('zh-CN', { hour12: false });
+        };
         updateClock();
         setInterval(updateClock, 1000);
+
+        // ---------- Todo CRUD with Supabase ----------
+        const setStatus = (msg, isError) => {
+            todoStatus.textContent = msg;
+            todoStatus.style.color = isError ? '#f5576c' : '#999';
+        };
+
+        const escapeHtml = (s) => s.replace(/[&<>"']/g, c => ({
+            '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+        }[c]));
+
+        // R - 读取
+        async function loadTodos() {
+            setStatus('加载中...');
+            const { data, error } = await supabase
+                .from('todos')
+                .select('*')
+                .order('created_at', { ascending: true });
+            if (error) { setStatus('加载失败：' + error.message, true); return; }
+            renderTodos(data || []);
+            setStatus(`共 ${data?.length || 0} 条`);
+        }
+
+        function renderTodos(items) {
+            todoList.innerHTML = '';
+            items.forEach(item => {
+                const li = document.createElement('li');
+                li.className = 'todo-item' + (item.done ? ' done' : '');
+                li.dataset.id = item.id;
+                li.innerHTML = `
+                    <input type="checkbox" ${item.done ? 'checked' : ''}>
+                    <span>${escapeHtml(item.text)}</span>
+                    <button class="delete-btn">&times;</button>
+                `;
+                li.querySelector('input').addEventListener('change', (e) => toggleTodo(item.id, e.target.checked));
+                li.querySelector('.delete-btn').addEventListener('click', () => deleteTodo(item.id));
+                todoList.appendChild(li);
+            });
+        }
+
+        // C - 新增
+        window.addTodo = async () => {
+            const text = todoInput.value.trim();
+            if (!text) return;
+            todoInput.value = '';
+            setStatus('添加中...');
+            const { error } = await supabase.from('todos').insert({ text, done: false });
+            if (error) { setStatus('添加失败：' + error.message, true); return; }
+            await loadTodos();
+        };
+
+        // U - 更新
+        async function toggleTodo(id, done) {
+            const { error } = await supabase.from('todos').update({ done }).eq('id', id);
+            if (error) { setStatus('更新失败：' + error.message, true); return; }
+            await loadTodos();
+        }
+
+        // D - 删除
+        async function deleteTodo(id) {
+            const { error } = await supabase.from('todos').delete().eq('id', id);
+            if (error) { setStatus('删除失败：' + error.message, true); return; }
+            await loadTodos();
+        }
+
+        window.handleKeyPress = (e) => { if (e.key === 'Enter') window.addTodo(); };
+
+        // 实时订阅：其他用户改动后本页自动刷新
+        supabase.channel('todos-realtime')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'todos' }, () => loadTodos())
+            .subscribe();
+
+        loadTodos();
     </script>
 </body>
 </html>

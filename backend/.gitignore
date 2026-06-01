@@ -1,0 +1,12 @@
+target/
+*.class
+*.jar
+
+.idea/
+*.iml
+.vscode/
+
+# 本地敏感配置，不提交
+application-local.yml
+
+.DS_Store
